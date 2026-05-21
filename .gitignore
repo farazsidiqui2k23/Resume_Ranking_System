@@ -1,0 +1,9 @@
+resume_venv/
+.vscode/
+.env
+db/
+docs/
+resume_test/
+
+__pycache__/
+*.pyc
