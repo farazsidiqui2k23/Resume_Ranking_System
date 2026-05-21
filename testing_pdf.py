@@ -1,121 +1,6 @@
-import pdfplumber
 import math
 from collections import defaultdict, Counter
 import fitz
-# def extract_characters():
-#     all_chars = []
-#     pdf_file = 'resume_test\TestingResume.pdf'
-
-#     with pdfplumber.open(pdf_file) as pdf:
-#         for page_num, page in enumerate(pdf.pages):
-            
-#             chars = page.chars
-#             for char in chars:
-#                 all_chars.append({
-#                     "text"    : char["text"],
-#                     "x0"      : char["x0"],
-#                     "x1"      : char["x1"],
-#                     "y0"      : char["y0"],
-#                     # "size"    : round(char["size"], 5),
-#                     "size" : math.ceil(char["size"] * 10)/10,
-#                     "fontname": char["fontname"],
-#                     "page"    : page_num + 1
-#                 })
-        
-#     for c in all_chars:
-#         print (c)    
-#     return all_chars;
-
-# def group_by_line(chars):
-#     lines = defaultdict(list)
-
-#     for char in chars:
-#         # round y0 to 1 decimal to handle floating point noise
-#         # e.g. 644.0323 and 644.0324 are the same line
-#         y_key = round(char["y0"], 1)
-#         lines[y_key].append(char)
-
-#     # sort each line's characters by x0 left to right
-#     for y_key in lines:
-#         lines[y_key].sort(key=lambda c: c["x0"])
-
-#     # return lines sorted top to bottom (highest y0 first in PDF = top of page)
-#     sorted_lines = sorted(lines.items(), key=lambda x: x[0], reverse=True)
-
-#     return sorted_lines
-
-
-# def detect_spaces(line_chars):
-#     words = []
-#     current_word = line_chars[0]["text"]
-
-#     for i in range(1, len(line_chars)):
-#         prev_char    = line_chars[i - 1]
-#         current_char = line_chars[i]
-
-#         gap = current_char["x0"] - prev_char["x1"]
-#         space_threshold = prev_char["size"] * 0.3
-
-#         if gap > space_threshold:
-#             words.append(current_word)
-#             current_word = current_char["text"]
-#         else:
-#             current_word += current_char["text"]
-
-#     words.append(current_word)
-#     return words
-
-
-# def extract_lines(chars):
-#     grouped = group_by_line(chars)
-#     result  = []
-
-#     for y_key, line_chars in grouped:
-#         words     = detect_spaces(line_chars)
-#         line_text = " ".join(words)
-#         avg_size  = sum(c["size"] for c in line_chars) / len(line_chars)
-#         fontname  = line_chars[0]["fontname"]
-
-#         result.append({
-#             "text"    : line_text,
-#             "y0"      : y_key,
-#             "size"    : round(avg_size, 2),
-#             "fontname": fontname,
-#             "is_bold" : "Bold" in fontname or "bold" in fontname
-#         })
-
-#     print(result)
-#     return result
-
-# if __name__ == "__main__":
-    
-#     # Step 1 — raw characters
-#     chars = extract_characters()
-#     print(f"\n extract_characters → returns {len(chars)} character dicts")
-#     print("  sample:", chars[0])
-
-#     # Step 2 — group by line and sort by x
-#     grouped = group_by_line(chars)
-#     print(f"\n group_by_line → returns {len(grouped)} lines (tuples)")
-#     print("  sample tuple key (y0)  :", grouped[0][0])
-#     print("  sample chars in line   :", [c["text"] for c in grouped[0][1]])
-
-#     # Step 3 — detect spaces within one line
-#     first_line_chars = grouped[0][1]
-#     words = detect_spaces(first_line_chars)
-#     print(f"\n detect_spaces → returns {len(words)} words")
-#     print("  words:", words)
-
-#     # Step 4 — full pipeline, all lines with metadata
-#     lines = extract_lines(chars)
-#     print(f"\n extract_lines → returns {len(lines)} line dicts")
-#     for line in lines:
-#         print(f"  y0:{line['y0']}  bold:{line['is_bold']}  size:{line['size']}  text: {line['text']}")
-
-
-# ══════════════════════════════════════════════
-#  PASS 1 — Extract words + learn font hierarchy
-# ══════════════════════════════════════════════
 
 def extract_words(pdf_path):
     all_words  = []
@@ -127,10 +12,8 @@ def extract_words(pdf_path):
     for page_num, page in enumerate(doc):
         blocks = page.get_text("dict")["blocks"]
 
-        if(page_num == 1):
-            break
         page_width = round(page.rect.width)
-        print(f"PAGE WIDTH: {page_width}")
+        # print(f"PAGE WIDTH: {page_width}")
 
         for block in blocks:
             
@@ -175,14 +58,16 @@ def extract_words(pdf_path):
                     })
 
                     all_sizes.append(size)
-                    
+                   
+    all_sizes.sort()                                
     size_counts  = Counter(all_sizes)
-   
+
     major_font_size = {
         "name_font" : size_counts.most_common()[-1][0],
         "body_font" : size_counts.most_common(1)[0][0]
     }
-    
+ 
+    print(major_font_size)
     return all_words, major_font_size, page_width
     
 
@@ -191,8 +76,8 @@ def checking_resume_std(all_words, page_width):
     cluster_B = []
     adaptive_threshold = round(page_width/100)*15
     page_third_val = round(page_width/100)*25
-    print(f"adaptive threshold {adaptive_threshold}")
-    print(f"25% of page {page_third_val}")
+    # print(f"adaptive threshold {adaptive_threshold}")
+    # print(f"25% of page {page_third_val}")
     x_positions = sorted(round(w["x0"]) for w in all_words)
     for x0 in x_positions:
         if x0 in range(x_positions[0], adaptive_threshold):
@@ -200,8 +85,8 @@ def checking_resume_std(all_words, page_width):
         else:
             cluster_B.append(x0)
         
-    print(f"Lenght of Cluster A: {len(cluster_A)}")
-    print(f"Lenght of Cluster B: {len(cluster_B)}")
+    # print(f"Lenght of Cluster A: {len(cluster_A)}")
+    # print(f"Lenght of Cluster B: {len(cluster_B)}")
     
     if(len(cluster_A) >= 5 and len(cluster_B) >= 5):
         
@@ -212,6 +97,7 @@ def checking_resume_std(all_words, page_width):
          
         print(f"Separation Ratio: {separation_ratio}")
         if(separation_ratio > 0.25):
+            print(f"  Result: ⚠️  MULTI COLUMN — ATS parsing not supported")
             return "NON-ATS"
         
     
@@ -221,7 +107,7 @@ def checking_resume_std(all_words, page_width):
 def detect_column_layout(all_words, page_width):  # 612 is standard A4 width in points
 
     # group words by y0 — same y = same line
-    print("detection second round")
+    
     line_buckets = defaultdict(list)
 
     for word in all_words:
@@ -237,9 +123,9 @@ def detect_column_layout(all_words, page_width):  # 612 is standard A4 width in 
         # sort words left to right by x0
         words_sorted = sorted(words, key=lambda w: w["x0"])
         
-        print(f"\nLINE y={y_key}")
-        for w in words_sorted:
-            print(w["text"], w["x0"], w["x1"])
+        # print(f"\nLINE y={y_key}")
+        # for w in words_sorted:
+        #     print(w["text"], w["x0"], w["x1"])
         
         
         for i in range(1, len(words_sorted)):
@@ -267,12 +153,12 @@ def detect_column_layout(all_words, page_width):  # 612 is standard A4 width in 
     # if more than 20% of lines show column gap → multi column resume
     column_ratio = multi_column_votes / total_lines if total_lines > 0 else 0
 
-    print(f"column_ratio = {column_ratio}")
+    # print(f"column_ratio = {column_ratio}")
 
-    print(f"\n[COLUMN DETECTION]")
-    print(f"  Total lines         : {total_lines}")
-    print(f"  Multi column votes  : {multi_column_votes}")
-    print(f"  Column ratio        : {round(column_ratio * 100, 2)}%")
+    # print(f"\n[COLUMN DETECTION]")
+    # print(f"  Total lines         : {total_lines}")
+    # print(f"  Multi column votes  : {multi_column_votes}")
+    # print(f"  Column ratio        : {round(column_ratio * 100, 2)}%")
 
     if column_ratio > 0.20:
         print(f"  Result              : ⚠️  MULTI COLUMN — ATS parsing not supported")
@@ -282,12 +168,9 @@ def detect_column_layout(all_words, page_width):  # 612 is standard A4 width in 
         return "ATS"
 
 
-# ══════════════════════════════════════════════
-#  PASS 2 — Group words into lines
-# ══════════════════════════════════════════════
-
-def pass2_build_lines(all_words):
-
+def build_lines(all_words, major_font_size):
+    
+    
     line_buckets = defaultdict(list)
 
     # group words by y0
@@ -298,36 +181,31 @@ def pass2_build_lines(all_words):
     # sort each line left to right by x0
     for y_key in line_buckets:
         line_buckets[y_key].sort(key=lambda w: w["x0"])
-
+    
     # sort lines top to bottom (highest y0 first in PyMuPDF = top of page)
     sorted_lines = sorted(line_buckets.items(), key=lambda x: x[0])
-
+    
     lines = []
-
-    for y_key, words in sorted_lines:
+    heading_list = []
+    for i, (y_key, words) in enumerate(sorted_lines):
+        
         line_text = " ".join(w["text"] for w in words)
         avg_size  = round(sum(w["size"] for w in words) / len(words), 2)
         is_bold   = any(w["bold"] for w in words)
-
-        # get level from hierarchy
-        # use the size of first word in line for level lookup
-        first_size = words[0]["size"]
-        level_info = hierarchy.get(first_size, {"level": 4, "label": "body"})
-
+            
+        is_heading = True if(is_bold and avg_size > major_font_size["body_font"] and avg_size < major_font_size["name_font"] and line_text.isupper()) else False
+        if is_heading:
+            heading_list.append(i)    
         lines.append({
             "text"  : line_text,
             "y0"    : y_key,
             "size"  : avg_size,
             "bold"  : is_bold,
-            "level" : level_info["level"],
-            "label" : level_info["label"]
+            "heading" : is_heading
         })
 
-    # print(f"\n[PASS 2] {len(lines)} lines built")
-    # for line in lines:
-    #     print(f"y0:{line['y0']}  level:{line['level']}  label:{line['label']}  bold:{line['bold']}  size:{line['size']}  text: {line['text']}")
-
-    return lines
+    print(f"Resume Contain {len(heading_list)} Headings")
+    return lines, heading_list
 
 
 
@@ -350,10 +228,9 @@ if __name__ == "__main__":
     checking_standard = checking_resume_std(all_words, pg_width)
 
     print(f"Resume Standard: {checking_standard}")
-    # if layout == "multi_column":
-    #     print("\n  Stopping. Please resubmit resume in single column ATS format.")
-    # else:
-    #     # Pass 2 — only runs if single column
-    #     lines = pass2_build_lines(all_words)
+    
+    if(checking_standard.strip() == "ATS"):
+        build_lines(all_words, major_font_size)
+    
 
    
