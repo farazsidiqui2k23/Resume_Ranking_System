@@ -99,10 +99,12 @@ def extract_words(folder_path):
 
 def checking_resume_std(resume_list):
     
-    rejected_resume = []
+    rejected_resume_path = []
     resume_list_copy = resume_list
     
     for resume_index, resume_data in enumerate(resume_list_copy): 
+        
+        print(resume_data)
         
         page_width = resume_data["metadata"]["page_width"]
         cluster_A = []
@@ -138,6 +140,7 @@ def checking_resume_std(resume_list):
             else:
                 #going to second round checking
                 if(detect_column_layout(all_words= resume_data["all_words"] , page_width = page_width) == "ATS"):
+                    
                     print(f"Given Resume: {resume_data['metadata']['file_path']} is ATS Standard")
                 else:
                     rejected_resume.append({"index" : resume_index, "path" : resume_data['metadata']['file_path']})
@@ -151,8 +154,10 @@ def checking_resume_std(resume_list):
                     rejected_resume.append({"index" : resume_index, "path" : resume_data['metadata']['file_path']})
                     print(f"Given Resume: {resume_data['metadata']['file_path']} is NOT ATS Standard")
     
-    rejected_resume_path = []
+    
+    
     for rej in rejected_resume:
+        
         for rej_key, rej_val in rej.items():
             if(rej_key == "index"):
                 del resume_list_copy[rej_val]
@@ -233,17 +238,27 @@ def build_lines(accepted_resume):
         
         font_size = resume["metadata"]["major_font_size"]
         
+        # print(resume["all_words"])
+        
         for word in resume["all_words"]:
             y_key = round(word["y0"], 1)
             line_buckets[y_key].append(word)
+        
+        # print(line_buckets)
 
         # sort each line left to right by x0
         for y_key in line_buckets:
             line_buckets[y_key].sort(key=lambda w: w["x0"])
+            
+        # print(line_buckets)
     
         # sort lines top to bottom (highest y0 first in PyMuPDF = top of page)
-        sorted_lines = sorted(line_buckets.items(), key=lambda x: x[0])
-    
+        sorted_lines = sorted(
+            line_buckets.items(),
+            key=lambda x: (x[1][0]["page"], x[0])
+        )
+        
+        # print(f"Sorted Line \n {sorted_lines}")
         for i, (y_key, words) in enumerate(sorted_lines):
         
             line_text = " ".join(w["text"] for w in words)
@@ -268,10 +283,10 @@ def build_lines(accepted_resume):
         resume_list.append(resume_dict)
         # print(resume)
     
-    for resume in resume_list:
-        print(f"METADATA : {resume['metadata']}")
-        print(f"Lines : {resume['line']}")
-        print(f"HEADING LIST : {resume['heading_index']}")
+    # for resume in resume_list:
+    #     print(f"METADATA : {resume['metadata']}")
+    #     print(f"Lines : {resume['line']}")
+    #     print(f"HEADING LIST : {resume['heading_index']}")
     
     
     return resume_list
@@ -290,8 +305,7 @@ def section_chunking(resume_data):
     
     resume_doc = []
     for i, resume in enumerate(resume_data):
-        # print(resume)
-        continue
+        
         section_heading = ""
         metadata = {
                 "resume_id": i + 1,
@@ -339,8 +353,8 @@ def section_chunking(resume_data):
             elif section_heading:
                 section_content[section_heading].append(line["text"])
         
-        for key, val in section_content.items():
-            print(f"{key} : {val} \n")
+        # for key, val in section_content.items():
+            # print(f"{key} : {val} \n")
                 
 
 if __name__ == "__main__":
@@ -359,9 +373,9 @@ if __name__ == "__main__":
     
     # print(accepted_resume[1])
    
-    
-    # print(f"Accepted Resume: {accepted_resume}")
-    # print(f"Rejected Resume Path: {rejected_resume_path}")
+    for ac in accepted_resume:
+        print(f"Accepted Resume: {ac}")
+    print(f"Rejected Resume Path: {rejected_resume_path}")
 
     
     refined_resumes = build_lines(accepted_resume)
