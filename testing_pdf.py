@@ -3,6 +3,7 @@ import re
 import math
 from pathlib import Path
 from collections import defaultdict, Counter
+from langchain_core.documents import Document
 import fitz
 
 def extract_words(folder_path):
@@ -100,18 +101,17 @@ def extract_words(folder_path):
 def checking_resume_std(resume_list):
     
     rejected_resume_path = []
-    resume_list_copy = resume_list
+    resume_list_copy = []
     
-    for resume_index, resume_data in enumerate(resume_list_copy): 
+    for resume_index, resume_data in enumerate(resume_list): 
         
-        print(resume_data)
+        
         
         page_width = resume_data["metadata"]["page_width"]
         cluster_A = []
         cluster_B = []
         adaptive_threshold = round(page_width/100)*15
         
-        page_third_val = round(page_width/100)*25
         # print(f"adaptive threshold {adaptive_threshold}")
         
         x_positions = sorted(round(w["x0"]) for w in resume_data["all_words"])
@@ -135,34 +135,25 @@ def checking_resume_std(resume_list):
             
             # print(f"Separation Ratio of {resume_data['metadata']['file_path']}: {separation_ratio}")
             if(separation_ratio > 0.25):
-                rejected_resume.append({"index" : resume_index, "path" : resume_data['metadata']['file_path']})
+                rejected_resume_path.append(resume_data['metadata']['file_path'])
                 print(f"Given Resume: {resume_data['metadata']['file_path']} is NOT ATS Standard")
             else:
                 #going to second round checking
                 if(detect_column_layout(all_words= resume_data["all_words"] , page_width = page_width) == "ATS"):
-                    
+                    resume_list_copy.append(resume_data)
                     print(f"Given Resume: {resume_data['metadata']['file_path']} is ATS Standard")
                 else:
-                    rejected_resume.append({"index" : resume_index, "path" : resume_data['metadata']['file_path']})
+                    rejected_resume_path.append(resume_data['metadata']['file_path'])
                     print(f"Given Resume: {resume_data['metadata']['file_path']} is NOT ATS Standard")
             
         else:
             #going to second round checking
                 if(detect_column_layout(all_words= resume_data["all_words"] , page_width = page_width) == "ATS"):
+                    resume_list_copy.append(resume_data)
                     print(f"Given Resume: {resume_data['metadata']['file_path']} is ATS Standard")
                 else:
-                    rejected_resume.append({"index" : resume_index, "path" : resume_data['metadata']['file_path']})
+                    rejected_resume_path.append(resume_data['metadata']['file_path'])
                     print(f"Given Resume: {resume_data['metadata']['file_path']} is NOT ATS Standard")
-    
-    
-    
-    for rej in rejected_resume:
-        
-        for rej_key, rej_val in rej.items():
-            if(rej_key == "index"):
-                del resume_list_copy[rej_val]
-            elif(rej_key == "path"):
-                rejected_resume_path.append(rej_val)
     
     return resume_list_copy, rejected_resume_path
 
@@ -353,9 +344,26 @@ def section_chunking(resume_data):
             elif section_heading:
                 section_content[section_heading].append(line["text"])
         
-        # for key, val in section_content.items():
-            # print(f"{key} : {val} \n")
-                
+        for section_name, content_list in section_content.items():
+            page_content = ""
+         
+            if len(content_list) == 0:
+                continue
+            for content in content_list:
+                page_content += content + " "
+            metadata["section"] = section_name
+            
+            doc = Document(
+                metadata = metadata,
+                page_content= page_content
+            )
+            
+            resume_doc.append(doc)
+    
+    for doc in resume_doc:
+        print(doc)
+    
+    return resume_doc                
 
 if __name__ == "__main__":
 
@@ -373,9 +381,9 @@ if __name__ == "__main__":
     
     # print(accepted_resume[1])
    
-    for ac in accepted_resume:
-        print(f"Accepted Resume: {ac}")
-    print(f"Rejected Resume Path: {rejected_resume_path}")
+    # for ac in accepted_resume:
+    #     print(f"Accepted Resume: {ac}")
+    # print(f"Rejected Resume Path: {rejected_resume_path}")
 
     
     refined_resumes = build_lines(accepted_resume)
@@ -383,5 +391,3 @@ if __name__ == "__main__":
     
     section_chunking(refined_resumes)
     
-
-   
