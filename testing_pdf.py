@@ -305,7 +305,7 @@ def section_chunking(resume_data):
                 "candidate_name": "",
                 "candidate_email": "",
                 "section": "",
-                "resume_path": resume["metadata"]["file_path"]
+                "resume_path": str(resume["metadata"]["file_path"])
             }
         section_content  = {
             "skills" : [],
@@ -382,6 +382,8 @@ def create_embeddings(document_chunks, persist_dir = "db/chroma_db" ):
     )
     
     print("Embedding are Created Successfully")
+    
+    return vectorstore
 
 if __name__ == "__main__":
     
