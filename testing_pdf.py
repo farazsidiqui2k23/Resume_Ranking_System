@@ -1,10 +1,12 @@
 import os
 import re
 import math
+import fitz
 from pathlib import Path
 from collections import defaultdict, Counter
 from langchain_core.documents import Document
-import fitz
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 
 def extract_words(folder_path):
     
@@ -349,6 +351,7 @@ def section_chunking(resume_data):
          
             if len(content_list) == 0:
                 continue
+            
             for content in content_list:
                 page_content += content + " "
             metadata["section"] = section_name
@@ -360,17 +363,27 @@ def section_chunking(resume_data):
             
             resume_doc.append(doc)
     
-    for doc in resume_doc:
-        print(doc)
+    # for doc in resume_doc:
+    #     print(doc)
     
     return resume_doc                
 
-if __name__ == "__main__":
+def create_embeddings(document_chunks, persist_dir = "db/chroma_db" ):
+    print("Creating Embeddings")
+    
+    embedding_model = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+    
+    vectorstore = Chroma.from_documents(
+        documents= document_chunks,
+        embedding= embedding_model,
+        persist_directory= persist_dir
+    )
+    
+    print("Embedding are Created Successfully")
 
-    # pdf_path = "resume_test/TestingResume.pdf"
-    # pdf_path = "docs/Ahmed_Raza_Resume.pdf"
-    # pdf_path = "docs/Syed_Ibad_Ali_Resume.pdf"
-    pdf_path = "docs/Bilal Ahmed Resume updated.pdf"
+if __name__ == "__main__":
     
     DOC_PATH = "docs"
     
@@ -385,9 +398,11 @@ if __name__ == "__main__":
     #     print(f"Accepted Resume: {ac}")
     # print(f"Rejected Resume Path: {rejected_resume_path}")
 
-    
     refined_resumes = build_lines(accepted_resume)
     
+    section_docs = section_chunking(refined_resumes)
     
-    section_chunking(refined_resumes)
+    create_embeddings(section_docs)
+    
+    
     

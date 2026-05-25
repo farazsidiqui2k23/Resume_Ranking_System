@@ -50,7 +50,6 @@ def load_resume(docs_path):
             )
         )
         
-
     for i, doc in enumerate(final_document):
         print(f"\nDocument: {i+1}")
         print(f" metadata: {doc.metadata['source']}")
