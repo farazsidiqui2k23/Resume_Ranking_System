@@ -5,6 +5,14 @@ from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
+from embeddings import BGE_MODEL
+
+DB_PATH = "db\chroma_db"
+VECTOR_STORE = Chroma(
+    persist_directory= DB_PATH,
+    embedding_function = BGE_MODEL,
+    collection_metadata= {"hnsw:space" : "cosine"}    
+    )
 
 def add_jd_as_whole_blob(jd : str):
     print(f"Job Desc Len: {len(jd)}")
@@ -18,15 +26,15 @@ def add_jd_as_section(jd : dict):
 
     result = query_resume_by_section(jd)
     
+    # print(result)
+    
     score = extract_resume_scores(result)
     
     comp_score = calc_composite_scores(score)
     
     rank_resumes(comp_score)
     
-    
-    
-    
+
 def query_resume_by_section(parse_jd : dict):
     
     results = {
@@ -35,20 +43,10 @@ def query_resume_by_section(parse_jd : dict):
         "education" : []
     }
     
-    DB_PATH = "db\chroma_db"
-    embedding_model = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
     REQUIRED_K = 3
     
-    vector_store = Chroma(
-    persist_directory= DB_PATH,
-    embedding_function = embedding_model,
-    collection_metadata= {"hnsw:space" : "cosine"}    
-    )
-    
     if parse_jd["skills"].strip():
-        skill_result = vector_store.similarity_search_with_score(
+        skill_result = VECTOR_STORE.similarity_search_with_score(
             query= parse_jd['skills'],
             k= REQUIRED_K,
             filter={"section": "skills"}
@@ -57,7 +55,7 @@ def query_resume_by_section(parse_jd : dict):
     
     
     if parse_jd["experience"].strip():
-        exp_results = vector_store.similarity_search_with_score(
+        exp_results = VECTOR_STORE.similarity_search_with_score(
             query=parse_jd["experience"],
             k=REQUIRED_K,
             filter={"section": "experience"}
@@ -66,7 +64,7 @@ def query_resume_by_section(parse_jd : dict):
     
     # Query education section (if exists in JD)
     if parse_jd["education"].strip():
-        edu_results = vector_store.similarity_search_with_score(
+        edu_results = VECTOR_STORE.similarity_search_with_score(
             query=parse_jd["education"],
             k=REQUIRED_K,
             filter={"section": "education"}
@@ -89,14 +87,16 @@ def extract_resume_scores(search_results):
     }
     
     for section_name, results in search_results.items():
-        for document, similarity_score in results:
+        for document, similarity_distance in results:
             resume_id = document.metadata["resume_id"]
+            
+            similarity_score = 1 - similarity_distance
             
             # Store score (similarity is already 0-1)
             if resume_id not in resume_scores[section_name]:
                 resume_scores[section_name][resume_id] = similarity_score
     
-    print(resume_scores)
+    # print(resume_scores)
     
     return resume_scores
     
@@ -128,7 +128,7 @@ def calc_composite_scores(resume_score):
         
     
     for resume_id in all_resume_ids:
-        print(resume_id)
+        # print(resume_id)
         weighted_score = 0
         total_weight = 0
         
@@ -165,7 +165,9 @@ def rank_resumes(composite_scores):
         key=lambda x: x[1],
         reverse=True
     )
-    
+    # candidate_info = {}
+    # all_metadata = VECTOR_STORE.get()['metadatas']
+   
     ranked_results = []
     
     for resume_id, score in sorted_resumes[:10]:  # Top 10
@@ -188,32 +190,28 @@ def rank_resumes(composite_scores):
 
 def finding_cadidate(resume_id):
     
-    embedding_model = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
-
-    db = Chroma(
-    persist_directory="db/chroma_db",
-    embedding_function=embedding_model
-    )
-    
-    resume_metadata_list = db.get()['metadatas']
+    resume_metadata_list = VECTOR_STORE.get()['metadatas']
     for data in resume_metadata_list:
         for key , val in data.items():
             if resume_id == val:
                 return(data['candidate_name'])
                 break
-       
-    
 
 def main():
     print("Main Calling")
     
+    # job_desc = {
+    # "experience": "2 to 3 years of experience in .NET development. Experience in building web applications using Microsoft technologies. Working in Agile/Scrum environments."
+    # ,
+    # "skills": "C#, .NET Core, .NET Framework, ASP.NET MVC, Web API, REST APIs and REST services, SQL Server, database design, Entity Framework, ADO.NET, LINQ, HTML, CSS, JavaScript, Git, source control systems, OOP. JWT, OAuth, OpenIddict, Identity, Azure, AWS, Blazor, React, and CI/CD pipelines. collaboration, code review participation, debugging, troubleshooting, and performance optimization."
+    # ,
+    # "education": ""
+    # }
     job_desc = {
-    "experience": "2 to 3 years of experience in .NET development. Experience in building web applications using Microsoft technologies. Working in Agile/Scrum environments."
-    ,
-    "skills": "C#, .NET Core, .NET Framework, ASP.NET MVC, Web API, REST APIs and REST services, SQL Server, database design, Entity Framework, ADO.NET, LINQ, HTML, CSS, JavaScript, Git, source control systems, OOP. JWT, OAuth, OpenIddict, Identity, Azure, AWS, Blazor, React, and CI/CD pipelines. collaboration, code review participation, debugging, troubleshooting, and performance optimization."
-    ,
+    "experience": "2 to 3 years of experience in Android application development. Experience in building and maintaining mobile applications for Android platforms. Working in Agile/Scrum environments.",
+    
+    "skills": "Java, Kotlin, Android SDK, Android Studio, Jetpack Components, MVVM architecture, Clean Architecture, REST APIs, Retrofit, Volley, JSON parsing, Room Database, SQLite, Firebase, Dependency Injection (Hilt/Dagger), Coroutines, Flow, LiveData, ViewModel, XML layouts, Material Design, Git, source control systems, OOP, design patterns, unit testing, UI testing, app performance optimization, debugging, troubleshooting, Google Play Store deployment, CI/CD pipelines, collaboration, and code review participation.",
+    
     "education": ""
     }
     

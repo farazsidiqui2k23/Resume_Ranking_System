@@ -1,347 +1,406 @@
 import os
 import re
-from langchain_community.document_loaders import TextLoader, DirectoryLoader
-from langchain_community.document_loaders.pdf import PyPDFLoader
+import math
+import fitz
+from pathlib import Path
+from collections import defaultdict, Counter
 from langchain_core.documents import Document
-from langchain_ollama import ChatOllama
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+from embeddings import BGE_MODEL
 
-def load_resume(docs_path):
-    print(f"Laoding Resume from {docs_path}")
+def extract_words(folder_path):
+    
+    candidate_resume = []
+    
+    folder = Path(folder_path)
 
-    if not os.path.exists(docs_path):
-        raise FileNotFoundError(f"The Directory {docs_path} doesn't Exist in your System.")
-
-    loader = DirectoryLoader( #list of doc objects
-        path= docs_path,
-        glob= "*.pdf",  #only look the file whose extension is .pdf
-        loader_cls = PyPDFLoader, 
-    )
-    
-    documents = loader.load()
-    
-    if len(documents) == 0:
-        raise FileNotFoundError(f"No .pdf file found in {docs_path}")
-    
-    merged_docs = {}
-    
-    for doc in documents:
-        source = doc.metadata["source"]
-        # print(source)
+    for file_path in folder.glob("*.pdf"):
         
-        if source not in merged_docs:
-            merged_docs[source] = ""
+        print(f"Opening file via file path {file_path}")
+        
+        if not file_path.exists:
+            print("File does not Exist")
+        
+        all_sizes  = []    
+        resume = {
+            "metadata" : {
+                "file_path" : file_path,
+                "page_width" : 612,
+                "major_font_size" : {}
+            },
+            "all_words" : []
+        }
+                
+        # page_width = 612 #default
+        doc = fitz.open(file_path)
+
+        for page_num, page in enumerate(doc):
+            blocks = page.get_text("dict")["blocks"]
+
+            if page_num == 0:
+                resume["metadata"]["page_width"] = round(page.rect.width)
+                # print(f"PAGE WIDTH: {page_width}")
             
-            # print(doc.page_content)
-        else:
-            merged_docs[source] += doc.page_content
+            # if(page_num > 0):
+            #     if not page_num == resume["metadata"]["page_width"]:
+            #         continue
+                
+            for block in blocks:
             
-        merged_docs[source] += doc.page_content + "\n"
-            
-    final_document = []
+                if "lines" not in block:
+                    continue
+
+                for line in block["lines"]:
+                    for span in line["spans"]:
+                                    
+                        text = span["text"].strip()
+                        size = math.ceil(span["size"]*10)/10
+                        bold = bool(span["flags"] & 2**4)
+                        x0   = round(span["origin"][0], 1)
+                        y0   = round(span["origin"][1], 1)
+                        x1   = span['bbox'][2]
+                        y1   = span['bbox'][3]
+                        
+                        if not text or text.isspace() or text == "|" or len(text) <= 3 or len(text) == 0 or text == "•":
+                            continue
+                                
+                                # print({
+                                #     "text": text,
+                                #     "x0": x0,
+                                #     "x1": x1,
+                                #     "y0": y0,
+                                #     "size": size
+                                #     })
+
+                        resume["all_words"].append({
+                            "text" : text,
+                            "size" : size,
+                            "bold" : bold,
+                            "y0"   : y0,
+                            "x0"   : x0,
+                            "x1"   : x1,
+                            "y1"   : y1,
+                            "page" : page_num + 1
+                        })
+
+                        all_sizes.append(size)
+                   
+        all_sizes.sort()                                
+        size_counts  = Counter(all_sizes)       
+        major_font_size = {
+            "name_font" : size_counts.most_common()[-1][0],
+            "body_font" : size_counts.most_common(1)[0][0]
+        }
+        
+        resume["metadata"]["major_font_size"] = major_font_size
+
+        candidate_resume.append(resume)
+
+    return candidate_resume
+
+
+def checking_resume_std(resume_list):
     
-    for source, content in merged_docs.items():
-        final_document.append(
-            Document(
-                page_content=content,
-                metadata={"source": source}
-            )
+    rejected_resume_path = []
+    resume_list_copy = []
+    
+    for resume_index, resume_data in enumerate(resume_list): 
+        
+        
+        
+        page_width = resume_data["metadata"]["page_width"]
+        cluster_A = []
+        cluster_B = []
+        adaptive_threshold = round(page_width/100)*15
+        
+        # print(f"adaptive threshold {adaptive_threshold}")
+        
+        x_positions = sorted(round(w["x0"]) for w in resume_data["all_words"])
+        for x0 in x_positions:
+            if x0 in range(x_positions[0], adaptive_threshold):
+                cluster_A.append(x0)
+            else:
+                cluster_B.append(x0)
+        
+        # print(f"Lenght of Cluster A: {len(cluster_A)}")
+        # print(f"Lenght of Cluster B: {len(cluster_B)}")
+        
+        check_cond = max(len(cluster_A), len(cluster_B)) / 2
+        
+        if(len(cluster_A) >= check_cond and len(cluster_B) >= check_cond):
+            
+            cluster_A_centroid = sum(cluster_A) / len(cluster_A)
+            cluster_B_centroid = sum(cluster_B) / len(cluster_B)
+            
+            separation_ratio = abs(cluster_B_centroid - cluster_A_centroid) / page_width
+            
+            # print(f"Separation Ratio of {resume_data['metadata']['file_path']}: {separation_ratio}")
+            if(separation_ratio > 0.25):
+                rejected_resume_path.append(resume_data['metadata']['file_path'])
+                print(f"Given Resume: {resume_data['metadata']['file_path']} is NOT ATS Standard")
+            else:
+                #going to second round checking
+                if(detect_column_layout(all_words= resume_data["all_words"] , page_width = page_width) == "ATS"):
+                    resume_list_copy.append(resume_data)
+                    print(f"Given Resume: {resume_data['metadata']['file_path']} is ATS Standard")
+                else:
+                    rejected_resume_path.append(resume_data['metadata']['file_path'])
+                    print(f"Given Resume: {resume_data['metadata']['file_path']} is NOT ATS Standard")
+            
+        else:
+            #going to second round checking
+                if(detect_column_layout(all_words= resume_data["all_words"] , page_width = page_width) == "ATS"):
+                    resume_list_copy.append(resume_data)
+                    print(f"Given Resume: {resume_data['metadata']['file_path']} is ATS Standard")
+                else:
+                    rejected_resume_path.append(resume_data['metadata']['file_path'])
+                    print(f"Given Resume: {resume_data['metadata']['file_path']} is NOT ATS Standard")
+    
+    return resume_list_copy, rejected_resume_path
+
+def detect_column_layout(all_words, page_width):  # 612 is standard A4 width in points
+
+    # group words by y0 — same y = same line
+    
+    line_buckets = defaultdict(list)
+
+    for word in all_words:
+        y_key = round(word["y0"], 1)
+        line_buckets[y_key].append(word)
+
+    
+    multi_column_votes = 0
+    total_lines = len(line_buckets)
+
+    for y_key, words in line_buckets.items():
+
+        # sort words left to right by x0
+        words_sorted = sorted(words, key=lambda w: w["x0"])
+        
+        # print(f"\nLINE y={y_key}")
+        # for w in words_sorted:
+        #     print(w["text"], w["x0"], w["x1"])
+        
+        
+        for i in range(1, len(words_sorted)):
+            prev_word    = words_sorted[i - 1]
+            
+            current_word = words_sorted[i]
+            # gap between end of prev word and start of current word
+            gap = current_word["x0"] - prev_word["x1"]
+
+            # print(
+            #     f"GAP: {gap} | "
+            #     f"prev='{prev_word['text']}' ({prev_word['x1']}) -> "
+            #     f"curr='{current_word['text']}' ({current_word['x0']})"
+            #     )
+
+            if gap > page_width * 0.25:  # 25% of page width = column separator
+                multi_column_votes += 1
+                break  # one vote per line is enough
+
+    # if more than 20% of lines show column gap → multi column resume
+    column_ratio = multi_column_votes / total_lines if total_lines > 0 else 0
+
+    # print(f"column_ratio = {column_ratio}")
+
+    # print(f"\n[COLUMN DETECTION]")
+    # print(f"  Total lines         : {total_lines}")
+    # print(f"  Multi column votes  : {multi_column_votes}")
+    # print(f"  Column ratio        : {round(column_ratio * 100, 2)}%")
+
+    if column_ratio > 0.20:
+        # print(f"  Result              : ⚠️  MULTI COLUMN — ATS parsing not supported")
+        return "NON-ATS"
+    else:
+        # print(f"  Result              : ✅  SINGLE COLUMN — Safe to proceed")
+        return "ATS"
+
+def build_lines(accepted_resume):
+    
+    resume_list = []
+   
+    # group words by y0
+    for resume in accepted_resume:
+        line_buckets = defaultdict(list)
+        resume_dict = {    } 
+        # print(resume)
+        lines = []
+        heading_list = []
+        
+        font_size = resume["metadata"]["major_font_size"]
+        
+        # print(resume["all_words"])
+        
+        for word in resume["all_words"]:
+            y_key = round(word["y0"], 1)
+            line_buckets[y_key].append(word)
+        
+        # print(line_buckets)
+
+        # sort each line left to right by x0
+        for y_key in line_buckets:
+            line_buckets[y_key].sort(key=lambda w: w["x0"])
+            
+        # print(line_buckets)
+    
+        # sort lines top to bottom (highest y0 first in PyMuPDF = top of page)
+        sorted_lines = sorted(
+            line_buckets.items(),
+            key=lambda x: (x[1][0]["page"], x[0])
         )
         
-    for i, doc in enumerate(final_document):
-        print(f"\nDocument: {i+1}")
-        print(f" metadata: {doc.metadata['source']}")
-        print(f"Page Content: {doc.page_content}")
+        # print(f"Sorted Line \n {sorted_lines}")
+        for i, (y_key, words) in enumerate(sorted_lines):
         
-        
-    return final_document;
+            line_text = " ".join(w["text"] for w in words)
+            avg_size  = round(sum(w["size"] for w in words) / len(words), 2)
+            is_bold   = any(w["bold"] for w in words)
+                
+            is_heading = True if(avg_size > font_size["body_font"] and avg_size < font_size["name_font"] and line_text.isupper()) else False
+            if is_heading:
+                heading_list.append(i)    
+            lines.append({
+                "text"  : line_text,
+                "y0"    : y_key,
+                "size"  : avg_size,
+                "bold"  : is_bold,
+                "heading" : is_heading
+            })
 
-def section_chunking(docs):
-    print("Splitting Sections")
+        resume_dict["metadata"] = resume["metadata"]
+        resume_dict["line"] = lines
+        resume_dict["heading_index"] = heading_list
+        
+        resume_list.append(resume_dict)
+        # print(resume)
     
-    candidate_resumes = []
+    # for resume in resume_list:
+    #     print(f"METADATA : {resume['metadata']}")
+    #     print(f"Lines : {resume['line']}")
+    #     print(f"HEADING LIST : {resume['heading_index']}")
+    
+    
+    return resume_list
+
+def section_chunking(resume_data):
+    print("Section Chunking")
+    
     EMAIL_PATTERN = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
-    
-    for i, resume_data in enumerate(docs[1:]):
-        print(resume_data.metadata['source'])
-        
-        # print(f"Seeing Document: {i}")
-        
-        lines = resume_data.page_content.split("\n")
-        
-        resume = {
-            "meta_data" : {
-                "path" : resume_data.metadata['source'], 
-                "name" : "",
-                "email" : ""
-            },
-            "page_content" : {
-                "skills" : "",  
-                "experience": "",
-                "projects" : "",
-                "education" : "",
-                "certifications" : ""
-            }
-        }    
-        
-        resume["meta_data"]["name"] = lines[0]
-        
-        section_map = {
+    section_map = {
         "skills": ["skills", "technical skills", "core skills", "expertise", "tech skills"],
         "experience": ["work experience", "experience", "professional experience"],
         "education": [ "academic background","education", "qualifications"],
         "projects": ["projects", "personal projects", "academic projects"],
         "certifications": ["certifications", "certificates", "certifications & training"]
         }
+    
+    resume_doc = []
+    for i, resume in enumerate(resume_data):
         
-        current_section = ""
-        resume_sec_heading = ""
-        email_found = False;
-        
-        education_line_count = 0
-        
-        for line in lines:
-            print(line)
-            if(not email_found):
-                found_emails = re.findall(EMAIL_PATTERN, line)
-                
-                if found_emails:
-                    # print("Email Found")
-                    resume["meta_data"]["email"] += found_emails[0]
-                    email_found = True
-                    
-            for section_name, section_list in section_map.items():
-                # print(f"section_map elements : {section_list}")        
-                for sections in section_list:
-                    # print(f"section list items: {sections}")
-                    if(line.lower().strip() == sections):
-                        current_section = section_name
-                        resume_sec_heading = sections
-                        break
-                     
-            if(line.lower() in ["professional summary", "career summary", "summary", "achievement",  "achievements", "key achievements"]):
-                current_section = ""
-                         
-            if current_section:
-                if(line.lower() != resume_sec_heading):
-                    
-                    # ✅ EDUCATION LIMIT LOGIC
-                    if current_section == "education":
-                        
-                        if education_line_count < 3:
-                            resume["page_content"]["education"] += line + " "
-                            education_line_count += 1
-                    
-                    else:
-                        resume["page_content"][current_section] += line + "\n"
-                             
-        candidate_resumes.append(resume)          
-    
-    
-    
-    
-    for resume in candidate_resumes:
-
-        print("\n================ RESUME =================")
-
-        print(f"PATH  : {resume['meta_data']['path']}")
-        print(f"NAME  : {resume['meta_data']['name'] or 'NOT FOUND'}")
-        print(f"EMAIL : {resume['meta_data']['email'] or 'NOT FOUND'}")
-
-        print("\n=========== PAGE CONTENT ===========")
-
-        sections = resume['page_content']
-
-        for section_name, content in sections.items():
-
-            if content and len(content.strip()) > 0:
-
-                print(f"\n--- {section_name.upper()} ---")
-                print(f"Length : {len(content)}")
-            
-                print(f"CONTENT: {content}")
-
-            else:
-                print(f"\n--- {section_name.upper()} ---")
-                print("Length : 0")
-                print("CONTENT NOT FOUND")
-
-        print("\n===========================================\n")
-    
-        
-    return candidate_resumes;
-    
-def refinining_chunks(chunked_resume):
-    
-    chat_model = ChatOllama(model="llama3") 
-    # chat_model = ChatOllama(model="phi") 
-    
-    refined_chunk_list = []
-    
-    SYSTEM_MESSAGE = """You are a resume section validator and cleaner. Your task is to refine extracted resume sections by:
-                            1. Removing irrelevant content, headers, formatting artifacts, and noise
-                            2. Keeping only content that belongs to the specific section
-                            3. Maintaining original meaning and information
-                            4. Removing duplicates and redundant entries
-                            5. Fixing formatting inconsistencies
-                        Return only the cleaned section content, nothing else. Be strict about relevance."""
-
-        # Section-specific prompts
-    SECTION_PROMPTS = {
-            "skills": """Clean this Skills section. Extract and list only technical skills, programming languages, tools, frameworks, and relevant soft skills. Remove descriptions and context. Return as a clean list.
-            CRITICAL: Output ONLY the cleaned list. No introduction. No explanation. No notes.
-            Raw content:
-            {content}""",
-            
-            "experience": """Clean this Experience section. Keep company name, job title, duration, key responsibilities, and achievements. Remove narrative fluff, personal opinions, and irrelevant details. Maintain structure and clarity.
-            IMPORTANT: Return ONLY the cleaned content. Do not include any explanations, introductions, preamble or notes.
-            Raw content:
-            {content}""",
-            
-            "education": """Clean this Education section. Keep degree name, institution, graduation date, GPA (if relevant), and relevant coursework/honors. Remove filler text and descriptions.
-            CRITICAL: Output ONLY the cleaned list. No introduction. No explanation. No notes.
-            Raw content:
-            {content}""",
-    
-            "projects": """Clean this Projects section. Keep project name, description, technologies used, and outcomes/impact. Remove personal commentary and irrelevant details.
-            IMPORTANT: Return ONLY the cleaned content. Do not include any explanations, introductions, preamble or notes.
-            Raw content:
-            {content}""",
-    
-            "certifications": """Clean this Certifications section. Keep certification name, issuing organization, date obtained, and credential ID if present. Remove descriptions and context.
-            IMPORTANT: Return ONLY the cleaned content. Do not include any explanations, introductions, preamble or notes.
-            Raw content:
-            {content}"""
-        }
-
-    for resume in chunked_resume:
-        
-        refined_chunk = {
-            "meta_data" : resume["meta_data"],
-            "page_content" : {
-                "skills" : "",  
-                "experience": "",
-                "projects" : "",
-                "education" : "",
-                "certifications" : ""
+        section_heading = ""
+        metadata = {
+                "resume_id": i + 1,
+                "candidate_name": "",
+                "candidate_email": "",
+                "section": "",
+                "resume_path": str(resume["metadata"]["file_path"])
             }
-        }  
-            # In your loop:
-        for section_key, section_data in resume["page_content"].items():
-    
-            if section_key in SECTION_PROMPTS:
-                if(section_data and len(section_data.strip()) > 0):
-                    message = [
-                        SystemMessage(content=SYSTEM_MESSAGE),
-                        HumanMessage(content=SECTION_PROMPTS[section_key].format(content=section_data))
-                    ]
+        section_content  = {
+            "skills" : [],
+            "experience" : [],
+            "education" : [],
+            "projects" : [],
+            "certifications" : []
+        }
+        metadata["candidate_name"] = resume["line"][0]['text']
         
-                    response = chat_model.invoke(message)
-                    refined_chunk["page_content"][section_key] = response.content
-                else:
-                    refined_chunk["page_content"][section_key] = section_data
+        heading_index = sorted(resume["heading_index"])
+        
+        j = 0
+        start_i = heading_index[j]
+        for i, line in enumerate(resume["line"]):
+            # print(i)
+            # print(line)
+            found_emails = re.findall(EMAIL_PATTERN, line['text'])
+            if found_emails:
+                metadata["candidate_email"] = found_emails[0]
+                continue
                 
-        refined_chunk_list.append(refined_chunk)
-            
-    for resume in refined_chunk_list:
-
-        print("\n================ RESUME =================")
-
-        print(f"PATH  : {resume['meta_data']['path']}")
-        print(f"NAME  : {resume['meta_data']['name'] or 'NOT FOUND'}")
-        print(f"EMAIL : {resume['meta_data']['email'] or 'NOT FOUND'}")
-
-        print("\n=========== PAGE CONTENT ===========")
-
-        sections = resume['page_content']
-
-        for section_name, content in sections.items():
-
-            if content and len(content.strip()) > 0:
-
-                print(f"\n--- {section_name.upper()} ---")
-                print(f"Length : {len(content)}")
-            
-                print(f"CONTENT: {content}")
-
-            else:
-                print(f"\n--- {section_name.upper()} ---")
-                print("Length : 0")
-                print("CONTENT NOT FOUND")
-
-        print("\n===========================================\n")
+            if i == start_i: #heading found
+                # print(f"j: {j}") #len(heading_index) = 5
+                if (j < len(heading_index)-1):
+                    j += 1
+                    start_i = heading_index[j]
+                for section_name, section_list in section_map.items():
+            #     # print(f"section_map elements : {section_list}")        
+                    for section in section_list:
+                        # print(line["text"])
+                        if(section == line["text"].lower()): #heading match
+                           section_heading = section_name
+                        #    print(section_heading)
+                            
+                           break
+                    
+            elif section_heading:
+                section_content[section_heading].append(line["text"])
         
-    return refined_chunk_list
-    
-def creating_embeddings(section_chunks, persist_direct = "db/chroma_db"):
-    print("Creating Embeddings")
-    
-    
-    embedding_model = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
-    
-    documents = []
-    
-    for i, resume in enumerate(section_chunks):
-        print(f"Creating Embedding of Resume: {i+1}")
-        
-        resume_id = i + 1
-        candidate_name = resume['meta_data']['name']
-        candidate_email = resume['meta_data']['email']
-        resume_path = resume['meta_data']['path']
-        
-        for section_name, section_content in resume["page_content"].items():
-            
-            if not section_content or section_content.strip() == "":
+        for section_name, content_list in section_content.items():
+            page_content = ""
+         
+            if len(content_list) == 0:
                 continue
             
-            metadata = {
-                "resume_id": resume_id,
-                "candidate_name": candidate_name,
-                "candidate_email": candidate_email,
-                "section": section_name,
-                "resume_path": resume_path
-            } 
+            for content in content_list:
+                page_content += content + " "
+            metadata["section"] = section_name
             
             doc = Document(
-                page_content= section_content,
-                metadata = metadata
+                metadata = metadata,
+                page_content= page_content
             )
             
-            documents.append(doc)
-            print(f"  Added {section_name} section for {candidate_name}")
-            
-    print(f"\nCreating Chroma collection with {len(documents)} documents...")
+            resume_doc.append(doc)
     
-    vector_store = Chroma.from_documents(
-        documents= documents,
-        embedding= embedding_model,
-        persist_directory= persist_direct
-    )
+    # for doc in resume_doc:
+    #     print(doc)
+    
+    return resume_doc                
 
-    print(f"Embeddings created and persisted at: {persist_direct}")
+def create_embeddings(document_chunks, persist_dir = "db/chroma_db" ):
+    print("Creating Embeddings")
     
-    return vector_store
+    vectorstore = Chroma.from_documents(
+        documents= document_chunks,
+        embedding= BGE_MODEL,
+        persist_directory= persist_dir
+    )
     
+    print("Embedding are Created Successfully")
     
-def main():
-    
-    DOCS_PATH = "docs"
-    
-    print("Main Function")
-    
-    documents = load_resume(docs_path= DOCS_PATH)
- 
-    # chuked_resume = section_chunking(docs= documents)
-    
-    # creating_embeddings(chuked_resume)
-    
-    
-    
-  
-    
+    return vectorstore
+
 if __name__ == "__main__":
-    main()
+    
+    DOC_PATH = "docs"
+    
+    extracted_resume = extract_words(DOC_PATH)
+    
+    # print(extracted_resume)
+    accepted_resume, rejected_resume_path = checking_resume_std(extracted_resume)
+    
+    # print(accepted_resume[1])
+   
+    # for ac in accepted_resume:
+    #     print(f"Accepted Resume: {ac}")
+    print(f"Rejected Resume Path: {rejected_resume_path}")
+
+    refined_resumes = build_lines(accepted_resume)
+    
+    section_docs = section_chunking(refined_resumes)
+    
+    create_embeddings(section_docs)
+    
+    
+    
