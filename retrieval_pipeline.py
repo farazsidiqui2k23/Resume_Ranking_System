@@ -110,7 +110,6 @@ def calc_composite_scores(resume_score):
         }
         '''
         
-    
         #later we'll take input from user
         #we can also set it according to job title internship, junior, senior position
     weights = {
