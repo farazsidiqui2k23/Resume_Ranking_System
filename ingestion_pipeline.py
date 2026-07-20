@@ -9,23 +9,25 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from embeddings import BGE_MODEL
 
-def extract_words(folder_path):
+def extract_words(pdf_files):
     
     candidate_resume = []
     
-    folder = Path(folder_path)
+    # folder = Path(folder_path)
 
-    for file_path in folder.glob("*.pdf"):
+    # for file_path in folder.glob("*.pdf"):
+    for file_name, file_bytes in pdf_files:
         
-        print(f"Opening file via file path {file_path}")
+        # print(f"Opening file via file path {file_path}")
         
-        if not file_path.exists:
-            print("File does not Exist")
+        # if not file_path.exists:
+        #     print("File does not Exist")
+            
         
         all_sizes  = []    
         resume = {
             "metadata" : {
-                "file_path" : file_path,
+                "file_path" : file_name,
                 "page_width" : 612,
                 "major_font_size" : {}
             },
@@ -33,7 +35,8 @@ def extract_words(folder_path):
         }
                 
         # page_width = 612 #default
-        doc = fitz.open(file_path)
+        # doc = fitz.open(file_path)
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
 
         for page_num, page in enumerate(doc):
             blocks = page.get_text("dict")["blocks"]
@@ -106,8 +109,6 @@ def checking_resume_std(resume_list):
     resume_list_copy = []
     
     for resume_index, resume_data in enumerate(resume_list): 
-        
-        
         
         page_width = resume_data["metadata"]["page_width"]
         cluster_A = []
@@ -368,24 +369,22 @@ def section_chunking(resume_data):
     
     return resume_doc                
 
-def create_embeddings(document_chunks, persist_dir = "db/chroma_db" ):
+def create_embeddings(document_chunks, persist_dir = "db/chroma_db"):
     print("Creating Embeddings")
     
     vectorstore = Chroma.from_documents(
         documents= document_chunks,
         embedding= BGE_MODEL,
-        persist_directory= persist_dir
+        # persist_directory= persist_dir
     )
     
     print("Embedding are Created Successfully")
     
     return vectorstore
 
-if __name__ == "__main__":
+def run_ingestion(pdf_files):
     
-    DOC_PATH = "docs"
-    
-    extracted_resume = extract_words(DOC_PATH)
+    extracted_resume = extract_words(pdf_files)
     
     # print(extracted_resume)
     accepted_resume, rejected_resume_path = checking_resume_std(extracted_resume)
@@ -400,7 +399,9 @@ if __name__ == "__main__":
     
     section_docs = section_chunking(refined_resumes)
     
-    create_embeddings(section_docs)
+    vector_embeddings = create_embeddings(section_docs)
+    
+    return vector_embeddings, rejected_resume_path
     
     
     

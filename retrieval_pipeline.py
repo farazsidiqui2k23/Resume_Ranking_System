@@ -7,12 +7,12 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from embeddings import BGE_MODEL
 
-DB_PATH = "db\chroma_db"
-VECTOR_STORE = Chroma(
-    persist_directory= DB_PATH,
-    embedding_function = BGE_MODEL,
-    collection_metadata= {"hnsw:space" : "cosine"}    
-    )
+# DB_PATH = "db\chroma_db"
+# VECTOR_STORE = Chroma(
+#     # persist_directory= DB_PATH,
+#     embedding_function = BGE_MODEL,
+#     collection_metadata= {"hnsw:space" : "cosine"}    
+#     )
 
 def add_jd_as_whole_blob(jd : str):
     print(f"Job Desc Len: {len(jd)}")
@@ -20,22 +20,14 @@ def add_jd_as_whole_blob(jd : str):
     #we're using rag fusion search
     
     
-def add_jd_as_section(jd : dict):
+def add_jd_as_section(jd : dict, vc_store):
     #experience, skills, education
     #print(f"Experience: {jd['experience']} \n Skills: {jd['skills']} \n Education: {jd['education']}")
 
-    result = query_resume_by_section(jd)
-    
-    # print(result)
-    
-    score = extract_resume_scores(result)
-    
-    comp_score = calc_composite_scores(score)
-    
-    rank_resumes(comp_score)
+    return query_resume_by_section(jd, vc_store)
     
 
-def query_resume_by_section(parse_jd : dict):
+def query_resume_by_section(parse_jd : dict, vector_store):
     
     results = {
         "skills" : [],
@@ -46,7 +38,7 @@ def query_resume_by_section(parse_jd : dict):
     REQUIRED_K = 3
     
     if parse_jd["skills"].strip():
-        skill_result = VECTOR_STORE.similarity_search_with_score(
+        skill_result = vector_store.similarity_search_with_score(
             query= parse_jd['skills'],
             k= REQUIRED_K,
             filter={"section": "skills"}
@@ -55,7 +47,7 @@ def query_resume_by_section(parse_jd : dict):
     
     
     if parse_jd["experience"].strip():
-        exp_results = VECTOR_STORE.similarity_search_with_score(
+        exp_results = vector_store.similarity_search_with_score(
             query=parse_jd["experience"],
             k=REQUIRED_K,
             filter={"section": "experience"}
@@ -64,7 +56,7 @@ def query_resume_by_section(parse_jd : dict):
     
     # Query education section (if exists in JD)
     if parse_jd["education"].strip():
-        edu_results = VECTOR_STORE.similarity_search_with_score(
+        edu_results = vector_store.similarity_search_with_score(
             query=parse_jd["education"],
             k=REQUIRED_K,
             filter={"section": "education"}
@@ -151,7 +143,7 @@ def calc_composite_scores(resume_score):
     #composite score: {1: 1.3139081796010337, 3: 1.3609097599983218, 4: 1.1910371780395508}
     #composite score: {1: 1.1825173616409301, 3: 1.2248187839984894, 4: 1.0719334602355957}
     
-def rank_resumes(composite_scores):
+def rank_resumes(composite_scores, vector_store):
     """
     Sort resumes by composite score
     Add resume metadata (name, email, path)
@@ -177,7 +169,7 @@ def rank_resumes(composite_scores):
         
         resume_info = {
             "resume_id": resume_id,
-            "candidate_name" : finding_cadidate(resume_id),
+            "candidate_name" : finding_cadidate(resume_id, vector_store),
             "composite_score": score,
             "rank": len(ranked_results) + 1,
             # Add metadata here
@@ -187,37 +179,49 @@ def rank_resumes(composite_scores):
     print(ranked_results)
     return ranked_results
 
-def finding_cadidate(resume_id):
+def finding_cadidate(resume_id, vector_store):
     
-    resume_metadata_list = VECTOR_STORE.get()['metadatas']
+    resume_metadata_list = vector_store.get()['metadatas']
     for data in resume_metadata_list:
         for key , val in data.items():
             if resume_id == val:
                 return(data['candidate_name'])
                 break
 
-def main():
-    print("Main Calling")
+# def main():
+#     print("Main Calling")
     
-    # job_desc = {
-    # "experience": "2 to 3 years of experience in .NET development. Experience in building web applications using Microsoft technologies. Working in Agile/Scrum environments."
-    # ,
-    # "skills": "C#, .NET Core, .NET Framework, ASP.NET MVC, Web API, REST APIs and REST services, SQL Server, database design, Entity Framework, ADO.NET, LINQ, HTML, CSS, JavaScript, Git, source control systems, OOP. JWT, OAuth, OpenIddict, Identity, Azure, AWS, Blazor, React, and CI/CD pipelines. collaboration, code review participation, debugging, troubleshooting, and performance optimization."
-    # ,
-    # "education": ""
-    # }
-    job_desc = {
-    "experience": "2 to 3 years of experience in Android application development. Experience in building and maintaining mobile applications for Android platforms. Working in Agile/Scrum environments.",
+#     # job_desc = {
+#     # "experience": "2 to 3 years of experience in .NET development. Experience in building web applications using Microsoft technologies. Working in Agile/Scrum environments."
+#     # ,
+#     # "skills": "C#, .NET Core, .NET Framework, ASP.NET MVC, Web API, REST APIs and REST services, SQL Server, database design, Entity Framework, ADO.NET, LINQ, HTML, CSS, JavaScript, Git, source control systems, OOP. JWT, OAuth, OpenIddict, Identity, Azure, AWS, Blazor, React, and CI/CD pipelines. collaboration, code review participation, debugging, troubleshooting, and performance optimization."
+#     # ,
+#     # "education": ""
+#     # }
+#     job_desc = {
+#     "experience": "2 to 3 years of experience in Android application development. Experience in building and maintaining mobile applications for Android platforms. Working in Agile/Scrum environments.",
     
-    "skills": "Java, Kotlin, Android SDK, Android Studio, Jetpack Components, MVVM architecture, Clean Architecture, REST APIs, Retrofit, Volley, JSON parsing, Room Database, SQLite, Firebase, Dependency Injection (Hilt/Dagger), Coroutines, Flow, LiveData, ViewModel, XML layouts, Material Design, Git, source control systems, OOP, design patterns, unit testing, UI testing, app performance optimization, debugging, troubleshooting, Google Play Store deployment, CI/CD pipelines, collaboration, and code review participation.",
+#     "skills": "Java, Kotlin, Android SDK, Android Studio, Jetpack Components, MVVM architecture, Clean Architecture, REST APIs, Retrofit, Volley, JSON parsing, Room Database, SQLite, Firebase, Dependency Injection (Hilt/Dagger), Coroutines, Flow, LiveData, ViewModel, XML layouts, Material Design, Git, source control systems, OOP, design patterns, unit testing, UI testing, app performance optimization, debugging, troubleshooting, Google Play Store deployment, CI/CD pipelines, collaboration, and code review participation.",
     
-    "education": ""
-    }
+#     "education": ""
+#     }
     
-    add_jd_as_section(job_desc)
+#     add_jd_as_section(job_desc)
     
     
-    print("DONE")
+#     print("DONE")
     
-if __name__ == "__main__":
-    main()
+def run_retrieval(mode, vector_store, jd):
+    if(mode == "Structured"):
+        result = add_jd_as_section(jd, vector_store)
+        
+    else:
+        print("Not Working!")
+    
+    score = extract_resume_scores(result)
+    
+    comp_score = calc_composite_scores(score)
+    
+    ranked_result = rank_resumes(comp_score, vector_store)
+    
+    return ranked_result
